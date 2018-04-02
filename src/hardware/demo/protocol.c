@@ -28,8 +28,6 @@
 #include "libsigrok-internal.h"
 #include "protocol.h"
 
-#define ANALOG_SAMPLES_PER_PERIOD 20
-
 static const uint8_t pattern_sigrok[] = {
 	0x4c, 0x92, 0x92, 0x92, 0x64, 0x00, 0x00, 0x00,
 	0x82, 0xfe, 0xfe, 0x82, 0x00, 0x00, 0x00, 0x00,
@@ -172,79 +170,6 @@ static const uint8_t pattern_squid[128][128 / 8] = {
 	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, },
 };
 
-SR_PRIV void demo_generate_analog_pattern(struct analog_gen *ag, uint64_t sample_rate)
-{
-	double t, frequency;
-	float value;
-	unsigned int num_samples, i;
-	int last_end;
-
-	sr_dbg("Generating %s pattern.", analog_pattern_str[ag->pattern]);
-
-	num_samples = ANALOG_BUFSIZE / sizeof(float);
-
-	switch (ag->pattern) {
-	case PATTERN_SQUARE:
-		value = ag->amplitude;
-		last_end = 0;
-		for (i = 0; i < num_samples; i++) {
-			if (i % 5 == 0)
-				value = -value;
-			if (i % 10 == 0)
-				last_end = i;
-			ag->pattern_data[i] = value;
-		}
-		ag->num_samples = last_end;
-		break;
-	case PATTERN_SINE:
-		frequency = (double) sample_rate / ANALOG_SAMPLES_PER_PERIOD;
-
-		/* Make sure the number of samples we put out is an integer
-		 * multiple of our period size */
-		/* FIXME we actually need only one period. A ringbuffer would be
-		 * useful here. */
-		while (num_samples % ANALOG_SAMPLES_PER_PERIOD != 0)
-			num_samples--;
-
-		for (i = 0; i < num_samples; i++) {
-			t = (double) i / (double) sample_rate;
-			ag->pattern_data[i] = ag->amplitude *
-						sin(2 * G_PI * frequency * t);
-		}
-
-		ag->num_samples = num_samples;
-		break;
-	case PATTERN_TRIANGLE:
-		frequency = (double) sample_rate / ANALOG_SAMPLES_PER_PERIOD;
-
-		while (num_samples % ANALOG_SAMPLES_PER_PERIOD != 0)
-			num_samples--;
-
-		for (i = 0; i < num_samples; i++) {
-			t = (double) i / (double) sample_rate;
-			ag->pattern_data[i] = (2 * ag->amplitude / G_PI) *
-						asin(sin(2 * G_PI * frequency * t));
-		}
-
-		ag->num_samples = num_samples;
-		break;
-	case PATTERN_SAWTOOTH:
-		frequency = (double) sample_rate / ANALOG_SAMPLES_PER_PERIOD;
-
-		while (num_samples % ANALOG_SAMPLES_PER_PERIOD != 0)
-			num_samples--;
-
-		for (i = 0; i < num_samples; i++) {
-			t = (double) i / (double) sample_rate;
-			ag->pattern_data[i] = 2 * ag->amplitude *
-						((t * frequency) - floor(0.5f + t * frequency));
-		}
-
-		ag->num_samples = num_samples;
-		break;
-	}
-}
-
 static void logic_generator(struct sr_dev_inst *sdi, uint64_t size)
 {
 	struct dev_context *devc;
@@ -360,67 +285,6 @@ static void logic_fixup_feed(struct dev_context *devc,
 	}
 }
 
-static void send_analog_packet(struct analog_gen *ag,
-		struct sr_dev_inst *sdi, uint64_t *analog_sent,
-		uint64_t analog_pos, uint64_t analog_todo)
-{
-	struct sr_datafeed_packet packet;
-	struct dev_context *devc;
-	uint64_t sending_now, to_avg;
-	int ag_pattern_pos;
-	unsigned int i;
-
-	if (!ag->ch || !ag->ch->enabled)
-		return;
-
-	devc = sdi->priv;
-	packet.type = SR_DF_ANALOG;
-	packet.payload = &ag->packet;
-
-	if (!devc->avg) {
-		ag_pattern_pos = analog_pos % ag->num_samples;
-		sending_now = MIN(analog_todo, ag->num_samples - ag_pattern_pos);
-		ag->packet.data = ag->pattern_data + ag_pattern_pos;
-		ag->packet.num_samples = sending_now;
-		sr_session_send(sdi, &packet);
-
-		/* Whichever channel group gets there first. */
-		*analog_sent = MAX(*analog_sent, sending_now);
-	} else {
-		ag_pattern_pos = analog_pos % ag->num_samples;
-		to_avg = MIN(analog_todo, ag->num_samples - ag_pattern_pos);
-
-		for (i = 0; i < to_avg; i++) {
-			ag->avg_val = (ag->avg_val +
-					*(ag->pattern_data +
-					  ag_pattern_pos + i)) / 2;
-			ag->num_avgs++;
-			/* Time to send averaged data? */
-			if (devc->avg_samples > 0 &&
-			    ag->num_avgs >= devc->avg_samples)
-				goto do_send;
-		}
-
-		if (devc->avg_samples == 0) {
-			/* We're averaging all the samples, so wait with
-			 * sending until the very end.
-			 */
-			*analog_sent = ag->num_avgs;
-			return;
-		}
-
-do_send:
-		ag->packet.data = &ag->avg_val;
-		ag->packet.num_samples = 1;
-
-		sr_session_send(sdi, &packet);
-		*analog_sent = ag->num_avgs;
-
-		ag->num_avgs = 0;
-		ag->avg_val = 0.0f;
-	}
-}
-
 /* Callback handling data */
 SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 {
@@ -428,10 +292,7 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	struct dev_context *devc;
 	struct sr_datafeed_packet packet;
 	struct sr_datafeed_logic logic;
-	struct analog_gen *ag;
-	GHashTableIter iter;
-	void *value;
-	uint64_t samples_todo, logic_done, analog_done, analog_sent, sending_now;
+	uint64_t samples_todo, logic_done, sending_now;
 	int64_t elapsed_us, limit_us, todo_us;
 
 	(void)fd;
@@ -442,8 +303,7 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 
 	/* Just in case. */
 	if (devc->cur_samplerate <= 0
-			|| (devc->num_logic_channels <= 0
-			&& devc->num_analog_channels <= 0)) {
+			|| (devc->num_logic_channels <= 0)) {
 		sr_dev_acquisition_stop(sdi);
 		return G_SOURCE_CONTINUE;
 	}
@@ -486,11 +346,8 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	logic_done = devc->num_logic_channels > 0 ? 0 : samples_todo;
 	if (!devc->enabled_logic_channels)
 		logic_done = samples_todo;
-	analog_done = devc->num_analog_channels > 0 ? 0 : samples_todo;
-	if (!devc->enabled_analog_channels)
-		analog_done = samples_todo;
 
-	while (logic_done < samples_todo || analog_done < samples_todo) {
+	while (logic_done < samples_todo) {
 		/* Logic */
 		if (logic_done < samples_todo) {
 			sending_now = MIN(samples_todo - logic_done,
@@ -506,23 +363,11 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 			logic_done += sending_now;
 		}
 
-		/* Analog, one channel at a time */
-		if (analog_done < samples_todo) {
-			analog_sent = 0;
-
-			g_hash_table_iter_init(&iter, devc->ch_ag);
-			while (g_hash_table_iter_next(&iter, NULL, &value)) {
-				send_analog_packet(value, sdi, &analog_sent,
-						devc->sent_samples + analog_done,
-						samples_todo - analog_done);
-			}
-			analog_done += analog_sent;
-		}
 	}
-	/* At this point, both logic_done and analog_done should be
+	/* At this point, logic_done should be
 	 * exactly equal to samples_todo, or else.
 	 */
-	if (logic_done != samples_todo || analog_done != samples_todo) {
+	if (logic_done != samples_todo) {
 		sr_err("BUG: Sample count mismatch.");
 		return G_SOURCE_REMOVE;
 	}
@@ -540,18 +385,6 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	if ((devc->limit_samples > 0 && devc->sent_samples >= devc->limit_samples)
 			|| (limit_us > 0 && devc->spent_us >= limit_us)) {
 
-		/* If we're averaging everything - now is the time to send data */
-		if (devc->avg && devc->avg_samples == 0) {
-			g_hash_table_iter_init(&iter, devc->ch_ag);
-			while (g_hash_table_iter_next(&iter, NULL, &value)) {
-				ag = value;
-				packet.type = SR_DF_ANALOG;
-				packet.payload = &ag->packet;
-				ag->packet.data = &ag->avg_val;
-				ag->packet.num_samples = 1;
-				sr_session_send(sdi, &packet);
-			}
-		}
 		sr_dbg("Requested number of samples reached.");
 		sr_dev_acquisition_stop(sdi);
 	} else {

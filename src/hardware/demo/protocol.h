@@ -113,13 +113,6 @@ enum {
 	PATTERN_SAWTOOTH,
 };
 
-static const char *analog_pattern_str[] = {
-	"square",
-	"sine",
-	"triangle",
-	"sawtooth",
-};
-
 struct analog_gen {
 	struct sr_channel *ch;
 	int pattern;
