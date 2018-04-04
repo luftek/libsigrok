@@ -197,9 +197,9 @@ static void logic_generator(struct sr_dev_inst *sdi, uint64_t size)
 			devc->logic_data[i] = (uint8_t)(rand() & 0xff);
 		break;
 	case PATTERN_INC:
-		for (i = 0; i < size; i++) {
+		for (i = 0; i < size; i += devc->logic_unitsize) {
 			for (j = 0; j < devc->logic_unitsize; j++)
-				devc->logic_data[i + j] = devc->step;
+				devc->logic_data[i + j] = devc->step >> 8*j;
 			devc->step++;
 		}
 		break;
@@ -258,31 +258,21 @@ static void logic_generator(struct sr_dev_inst *sdi, uint64_t size)
 }
 
 /*
- * Fixup a memory image of generated logic data before it gets sent to
+ * Mask a memory image of generated logic data before it gets sent to
  * the session's datafeed. Mask out content from disabled channels.
- *
- * TODO: Need we apply a channel map, and enforce a dense representation
- * of the enabled channels' data?
  */
-static void logic_fixup_feed(struct dev_context *devc,
+static void logic_mask_feed(struct dev_context *devc,
 		struct sr_datafeed_logic *logic)
 {
-	size_t fp_off;
-	uint8_t fp_mask;
 	size_t off, idx;
 	uint8_t *sample;
 
-	fp_off = devc->first_partial_logic_index;
-	fp_mask = devc->first_partial_logic_mask;
-	if (fp_off == logic->unitsize)
-		return;
-
 	for (off = 0; off < logic->length; off += logic->unitsize) {
+		for (idx = 0; idx < logic->unitsize; idx++) {
 		sample = logic->data + off;
-		sample[fp_off] &= fp_mask;
-		for (idx = fp_off + 1; idx < logic->unitsize; idx++)
-			sample[idx] = 0x00;
+			sample[idx] &=  devc->enabled_logic_ch_map >> 8*idx;
 	}
+}
 }
 
 /* Callback handling data */
@@ -293,32 +283,33 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	struct sr_datafeed_packet packet;
 	struct sr_datafeed_logic logic;
 	uint64_t samples_todo, logic_done, sending_now;
-	int64_t elapsed_us, limit_us, todo_us;
+	int64_t elapsed_us, todo_us;
 
 	(void)fd;
 	(void)revents;
 
 	sdi = cb_data;
 	devc = sdi->priv;
+	logic_done = 0;
 
 	/* Just in case. */
 	if (devc->cur_samplerate <= 0
-			|| (devc->num_logic_channels <= 0)) {
+			|| (devc->num_logic_channels <= 0)
+			|| (devc->enabled_logic_ch_map == 0x0)) {
 		sr_dev_acquisition_stop(sdi);
 		return G_SOURCE_CONTINUE;
 	}
 
 	/* What time span should we send samples for? */
 	elapsed_us = g_get_monotonic_time() - devc->start_us;
-	limit_us = 1000 * devc->limit_msec;
-	if (limit_us > 0 && limit_us < elapsed_us)
-		todo_us = MAX(0, limit_us - devc->spent_us);
-	else
 		todo_us = MAX(0, elapsed_us - devc->spent_us);
 
 	/* How many samples are outstanding since the last round? */
 	samples_todo = (todo_us * devc->cur_samplerate + G_USEC_PER_SEC - 1)
 			/ G_USEC_PER_SEC;
+
+	if (samples_todo == 0)
+		return G_SOURCE_CONTINUE;
 
 	if (devc->limit_samples > 0) {
 		if (devc->limit_samples < devc->sent_samples)
@@ -327,8 +318,6 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 			samples_todo = devc->limit_samples - devc->sent_samples;
 	}
 
-	if (samples_todo == 0)
-		return G_SOURCE_CONTINUE;
 
 #if (SAMPLES_PER_FRAME > 0) /* Avoid "comparison < 0 always false" warning. */
 	/* Never send more samples than a frame can fit... */
@@ -343,27 +332,25 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	 */
 	todo_us = samples_todo * G_USEC_PER_SEC / devc->cur_samplerate;
 
-	logic_done = devc->num_logic_channels > 0 ? 0 : samples_todo;
-	if (!devc->enabled_logic_channels)
-		logic_done = samples_todo;
-
 	while (logic_done < samples_todo) {
-		/* Logic */
-		if (logic_done < samples_todo) {
-			sending_now = MIN(samples_todo - logic_done,
-					LOGIC_BUFSIZE / devc->logic_unitsize);
-			logic_generator(sdi, sending_now * devc->logic_unitsize);
-			packet.type = SR_DF_LOGIC;
-			packet.payload = &logic;
-			logic.length = sending_now * devc->logic_unitsize;
-			logic.unitsize = devc->logic_unitsize;
-			logic.data = devc->logic_data;
-			logic_fixup_feed(devc, &logic);
-			sr_session_send(sdi, &packet);
-			logic_done += sending_now;
-		}
+		/* Prepare data */
+		sending_now = MIN(samples_todo - logic_done,
+				LOGIC_BUFSIZE / devc->logic_unitsize);
+		logic_generator(sdi, sending_now * devc->logic_unitsize);
+		packet.type = SR_DF_LOGIC;
+		packet.payload = &logic;
+		logic.length = sending_now * devc->logic_unitsize;
+		logic.unitsize = devc->logic_unitsize;
+		logic.data = devc->logic_data;
+		logic_mask_feed(devc, &logic);
 
+		/* Check for soft-triggers*/
+
+		/* Send regular data*/
+		sr_session_send(sdi, &packet);
+		logic_done += sending_now;
 	}
+
 	/* At this point, logic_done should be
 	 * exactly equal to samples_todo, or else.
 	 */
@@ -382,8 +369,7 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	}
 #endif
 
-	if ((devc->limit_samples > 0 && devc->sent_samples >= devc->limit_samples)
-			|| (limit_us > 0 && devc->spent_us >= limit_us)) {
+	if (devc->limit_samples > 0 && devc->sent_samples >= devc->limit_samples) {
 
 		sr_dbg("Requested number of samples reached.");
 		sr_dev_acquisition_stop(sdi);

@@ -31,8 +31,6 @@
 
 /* The size in bytes of chunks to send through the session bus. */
 #define LOGIC_BUFSIZE			4096
-/* Size of the analog pattern space per channel. */
-#define ANALOG_BUFSIZE			4096
 /* This is a development feature: it starts a new frame every n samples. */
 #define SAMPLES_PER_FRAME		0
 
@@ -51,15 +49,7 @@ struct dev_context {
 	/* There is only ever one logic channel group, so its pattern goes here. */
 	uint8_t logic_pattern;
 	unsigned char logic_data[LOGIC_BUFSIZE];
-	/* Analog */
-	int32_t num_analog_channels;
-	GHashTable *ch_ag;
-	gboolean avg; /* True if averaging is enabled */
-	uint64_t avg_samples;
-	size_t enabled_logic_channels;
-	size_t enabled_analog_channels;
-	size_t first_partial_logic_index;
-	uint8_t first_partial_logic_mask;
+	size_t enabled_logic_ch_map;
 };
 
 /* Logic patterns we can generate. */
@@ -105,29 +95,6 @@ enum {
 	PATTERN_SQUID,
 };
 
-/* Analog patterns we can generate. */
-enum {
-	PATTERN_SQUARE,
-	PATTERN_SINE,
-	PATTERN_TRIANGLE,
-	PATTERN_SAWTOOTH,
-};
-
-struct analog_gen {
-	struct sr_channel *ch;
-	int pattern;
-	float amplitude;
-	float pattern_data[ANALOG_BUFSIZE];
-	unsigned int num_samples;
-	struct sr_datafeed_analog packet;
-	struct sr_analog_encoding encoding;
-	struct sr_analog_meaning meaning;
-	struct sr_analog_spec spec;
-	float avg_val; /* Average value */
-	unsigned num_avgs; /* Number of samples averaged */
-};
-
-SR_PRIV void demo_generate_analog_pattern(struct analog_gen *ag, uint64_t sample_rate);
 SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data);
 
 #endif

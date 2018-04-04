@@ -28,8 +28,8 @@
 #include "libsigrok-internal.h"
 #include "protocol.h"
 
-#define DEFAULT_NUM_LOGIC_CHANNELS	4
-#define DEFAULT_LOGIC_PATTERN		PATTERN_SIGROK
+#define DEFAULT_NUM_LOGIC_CHANNELS	12
+#define DEFAULT_LOGIC_PATTERN		PATTERN_INC
 
 /* Note: No spaces allowed because of sigrok-cli. */
 static const char *logic_pattern_str[] = {
@@ -55,7 +55,6 @@ static const uint32_t drvopts[] = {
 static const uint32_t devopts[] = {
 	SR_CONF_CONTINUOUS,
 	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET,
-	SR_CONF_LIMIT_MSEC | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_SAMPLERATE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 };
 
@@ -95,10 +94,9 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 	sdi->model = g_strdup("Demo device");
 
 	devc = g_malloc0(sizeof(struct dev_context));
-	devc->limit_samples = 1000;
-	devc->cur_samplerate = SR_HZ(100);
+	devc->limit_samples = 10000;
+	devc->cur_samplerate = SR_MHZ(100);
 	devc->num_logic_channels = num_logic_channels;
-	devc->logic_unitsize = (devc->num_logic_channels + 7) / 8;
 	devc->logic_pattern = DEFAULT_LOGIC_PATTERN;
 
 	if (num_logic_channels > 0) {
@@ -140,9 +138,6 @@ static int config_get(uint32_t key, GVariant **data,
 	case SR_CONF_LIMIT_SAMPLES:
 		*data = g_variant_new_uint64(devc->limit_samples);
 		break;
-	case SR_CONF_LIMIT_MSEC:
-		*data = g_variant_new_uint64(devc->limit_msec);
-		break;
 	case SR_CONF_PATTERN_MODE:
 		if (!cg)
 			return SR_ERR_CHANNEL_GROUP;
@@ -171,12 +166,7 @@ static int config_set(uint32_t key, GVariant *data,
 		devc->cur_samplerate = g_variant_get_uint64(data);
 		break;
 	case SR_CONF_LIMIT_SAMPLES:
-		devc->limit_msec = 0;
 		devc->limit_samples = g_variant_get_uint64(data);
-		break;
-	case SR_CONF_LIMIT_MSEC:
-		devc->limit_msec = g_variant_get_uint64(data);
-		devc->limit_samples = 0;
 		break;
 	case SR_CONF_PATTERN_MODE:
 		if (!cg)
@@ -239,45 +229,22 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	struct dev_context *devc;
 	GSList *l;
 	struct sr_channel *ch;
-	int bitpos;
-	uint8_t mask;
 
 	devc = sdi->priv;
 	devc->sent_samples = 0;
 	devc->sent_frame_samples = 0;
 
-	/*
-	 * Determine the numbers of logic channels that are
-	 * involved in the acquisition. Determine an offset and a mask to
-	 * remove excess logic data content before datafeed submission.
-	 */
-	devc->enabled_logic_channels = 0;
+	/* Check for enabled channels and define map + max logic_unitsize*/
+	devc->enabled_logic_ch_map = 0x0;
 	for (l = sdi->channels; l; l = l->next) {
 		ch = l->data;
-		if (!ch->enabled)
-			continue;
 		if (ch->type != SR_CHANNEL_LOGIC)
 			continue;
-		/*
-		 * TODO: Need we create a channel map here, such that the
-		 * session datafeed packets will have a dense representation
-		 * of the enabled channels' data? For example store channels
-		 * D3 and D5 in bit positions 0 and 1 respectively, when all
-		 * other channels are disabled? The current implementation
-		 * generates a sparse layout, might provide data for logic
-		 * channels that are disabled while it might suppress data
-		 * from enabled channels at the same time.
-		 */
-		devc->enabled_logic_channels++;
+		if (ch->enabled) {
+			devc->logic_unitsize = MAX((devc->logic_unitsize), (unsigned int)((ch->index + 1 + 7) / 8));
+			devc->enabled_logic_ch_map |= 1 << ch->index;
+		}
 	}
-	devc->first_partial_logic_index = devc->enabled_logic_channels / 8;
-	bitpos = devc->enabled_logic_channels % 8;
-	mask = (1 << bitpos) - 1;
-	devc->first_partial_logic_mask = mask;
-	sr_dbg("num logic %zu, partial off %zu, mask 0x%02x.",
-		devc->enabled_logic_channels,
-		devc->first_partial_logic_index,
-		devc->first_partial_logic_mask);
 
 	sr_session_source_add(sdi->session, -1, 0, 100,
 			demo_prepare_data, (struct sr_dev_inst *)sdi);
