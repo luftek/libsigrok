@@ -350,6 +350,11 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 			/* Send regular data*/
 			sr_session_send(sdi, &packet);
 			devc->sent_samples += sending_now;
+			
+			/* TEST, send trigger frame to create vertical blue line in pulseview :) */ 
+			packet.type = SR_DF_TRIGGER;
+			packet.payload = NULL;
+			sr_session_send(sdi, &packet);
 		} 
 		else {
 			/* Check for soft-triggers*/
