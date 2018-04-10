@@ -37,6 +37,14 @@
 struct dev_context {
 	uint64_t cur_samplerate;
 	uint64_t limit_samples;
+
+    /** Percent of the samples that should be captured before the trigger. */
+    uint64_t capture_ratio;
+    uint8_t *convbuffer;
+    size_t convbuffer_size;
+    struct soft_trigger_logic *stl;
+    gboolean trigger_fired;
+
 	uint64_t limit_msec;
 	uint64_t sent_samples;
 	uint64_t sent_frame_samples; /* Number of samples that were sent for current frame. */

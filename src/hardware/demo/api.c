@@ -56,10 +56,20 @@ static const uint32_t devopts[] = {
 	SR_CONF_CONTINUOUS,
 	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_SAMPLERATE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
+	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
 };
 
 static const uint32_t devopts_cg_logic[] = {
 	SR_CONF_PATTERN_MODE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+};
+
+static const int32_t trigger_matches[] = {
+       SR_TRIGGER_ZERO,
+       SR_TRIGGER_ONE,
+       SR_TRIGGER_RISING,
+       SR_TRIGGER_FALLING,
+       SR_TRIGGER_EDGE,
 };
 
 static const uint64_t samplerates[] = {
@@ -145,6 +155,12 @@ static int config_get(uint32_t key, GVariant **data,
 		pattern = devc->logic_pattern;
 		*data = g_variant_new_string(logic_pattern_str[pattern]);
 		break;
+    case SR_CONF_CAPTURE_RATIO:
+            if (!sdi)
+                    return SR_ERR;
+            devc = sdi->priv;
+            *data = g_variant_new_uint64(devc->capture_ratio);
+			break;
 	default:
 		return SR_ERR_NA;
 	}
@@ -187,6 +203,9 @@ static int config_set(uint32_t key, GVariant *data,
 				memset(devc->logic_data, 0xff, LOGIC_BUFSIZE);
 		}
 		break;
+    case SR_CONF_CAPTURE_RATIO:
+            devc->capture_ratio = g_variant_get_uint64(data);
+            break;
 	default:
 		return SR_ERR_NA;
 	}
@@ -204,6 +223,9 @@ static int config_list(uint32_t key, GVariant **data,
 			return STD_CONFIG_LIST(key, data, sdi, cg, scanopts, drvopts, devopts);
 		case SR_CONF_SAMPLERATE:
 			*data = std_gvar_samplerates_steps(ARRAY_AND_SIZE(samplerates));
+			break;
+		case SR_CONF_TRIGGER_MATCH:
+			*data = std_gvar_array_i32(ARRAY_AND_SIZE(trigger_matches));
 			break;
 		default:
 			return SR_ERR_NA;
@@ -227,12 +249,24 @@ static int config_list(uint32_t key, GVariant **data,
 static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
+	struct sr_trigger *trigger;
 	GSList *l;
 	struct sr_channel *ch;
 
 	devc = sdi->priv;
 	devc->sent_samples = 0;
 	devc->sent_frame_samples = 0;
+
+    if ((trigger = sr_session_trigger_get(sdi->session))) {
+            int pre_trigger_samples = 0;
+            if (devc->limit_samples > 0)
+                    pre_trigger_samples = (devc->capture_ratio * devc->limit_samples) / 100;
+            devc->stl = soft_trigger_logic_new(sdi, trigger, pre_trigger_samples);
+            if (!devc->stl)
+                    return SR_ERR_MALLOC;
+            devc->trigger_fired = FALSE;
+    } else
+            devc->trigger_fired = TRUE;
 
 	/* Check for enabled channels and define map + max logic_unitsize*/
 	devc->enabled_logic_ch_map = 0x0;
