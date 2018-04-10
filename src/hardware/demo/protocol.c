@@ -284,6 +284,8 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	struct sr_datafeed_logic logic;
 	uint64_t samples_todo, logic_done, sending_now;
 	int64_t elapsed_us, todo_us;
+	int trigger_offset;
+	int pre_trigger_samples;
 
 	(void)fd;
 	(void)revents;
@@ -302,14 +304,11 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 
 	/* What time span should we send samples for? */
 	elapsed_us = g_get_monotonic_time() - devc->start_us;
-		todo_us = MAX(0, elapsed_us - devc->spent_us);
+	todo_us = MAX(0, elapsed_us - devc->spent_us);
 
 	/* How many samples are outstanding since the last round? */
 	samples_todo = (todo_us * devc->cur_samplerate + G_USEC_PER_SEC - 1)
 			/ G_USEC_PER_SEC;
-
-	if (samples_todo == 0)
-		return G_SOURCE_CONTINUE;
 
 	if (devc->limit_samples > 0) {
 		if (devc->limit_samples < devc->sent_samples)
@@ -317,6 +316,9 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 		else if (devc->limit_samples - devc->sent_samples < samples_todo)
 			samples_todo = devc->limit_samples - devc->sent_samples;
 	}
+
+	if (samples_todo == 0)
+		return G_SOURCE_CONTINUE;
 
 
 #if (SAMPLES_PER_FRAME > 0) /* Avoid "comparison < 0 always false" warning. */
@@ -344,10 +346,25 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 		logic.data = devc->logic_data;
 		logic_mask_feed(devc, &logic);
 
-		/* Check for soft-triggers*/
+		if (devc->trigger_fired) {
+			/* Send regular data*/
+			sr_session_send(sdi, &packet);
+			devc->sent_samples += sending_now;
+		} 
+		else {
+			/* Check for soft-triggers*/
+			trigger_offset = soft_trigger_logic_check(devc->stl,
+				devc->logic_data, sending_now * devc->logic_unitsize, &pre_trigger_samples);
 
-		/* Send regular data*/
-		sr_session_send(sdi, &packet);
+			if (trigger_offset > -1){
+				logic.length = (sending_now - trigger_offset) * devc->logic_unitsize;
+				logic.data = devc->logic_data + trigger_offset * devc->logic_unitsize;
+				sr_session_send(sdi, &packet);
+				devc->sent_samples += pre_trigger_samples + sending_now - trigger_offset;
+
+				devc->trigger_fired = TRUE;
+			}
+		}
 		logic_done += sending_now;
 	}
 
@@ -358,7 +375,7 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 		sr_err("BUG: Sample count mismatch.");
 		return G_SOURCE_REMOVE;
 	}
-	devc->sent_samples += samples_todo;
+	//devc->sent_samples += sending_now;
 	devc->sent_frame_samples += samples_todo;
 	devc->spent_us += todo_us;
 
