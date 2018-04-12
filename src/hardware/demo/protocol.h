@@ -44,6 +44,7 @@ struct dev_context {
     size_t convbuffer_size;
     struct soft_trigger_logic *stl;
     gboolean trigger_fired;
+	gboolean trigger_continue;
 
 	uint64_t limit_msec;
 	uint64_t sent_samples;

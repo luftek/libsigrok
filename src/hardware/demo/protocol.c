@@ -347,16 +347,47 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 		logic_mask_feed(devc, &logic);
 
 		if (devc->trigger_fired) {
-			/* Send regular data*/
-			sr_session_send(sdi, &packet);
-			devc->sent_samples += sending_now;
 			
-			/* TEST, send trigger frame to create vertical blue line in pulseview :) */ 
-			packet.type = SR_DF_TRIGGER;
-			packet.payload = NULL;
-			sr_session_send(sdi, &packet);
-		} 
-		else {
+			pre_trigger_samples = -1; /* Special mode, test */
+
+			/* Check for soft-triggers*/
+			if (devc->trigger_continue) {
+				
+				/* This call returns first trigger_offset from current sample buffer, not multiple */
+				trigger_offset = soft_trigger_logic_check(devc->stl,
+					devc->logic_data, sending_now * devc->logic_unitsize, &pre_trigger_samples);
+				
+				if (trigger_offset > -1){
+
+					/* Send data before trigger */
+					packet.type = SR_DF_LOGIC;
+					packet.payload = &logic;
+					logic.length = trigger_offset * devc->logic_unitsize;
+					logic.data = devc->logic_data;
+					sr_session_send(sdi, &packet);
+
+					/* Send trigger frame */ 
+					packet.type = SR_DF_TRIGGER;
+					packet.payload = NULL;
+					sr_session_send(sdi, &packet);
+					
+					/* Send data after trigger */
+					packet.type = SR_DF_LOGIC;
+					packet.payload = &logic;
+					logic.length = (sending_now - trigger_offset) * devc->logic_unitsize;
+					logic.data = devc->logic_data + trigger_offset * devc->logic_unitsize;
+					sr_session_send(sdi, &packet);
+				} else {
+					/* Send regular data*/
+					sr_session_send(sdi, &packet);
+				}				
+			} else {
+				/* Send regular data*/
+				sr_session_send(sdi, &packet);
+			}
+			devc->sent_samples += sending_now;
+
+		} else {
 			/* Check for soft-triggers*/
 			trigger_offset = soft_trigger_logic_check(devc->stl,
 				devc->logic_data, sending_now * devc->logic_unitsize, &pre_trigger_samples);
@@ -367,7 +398,8 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 				sr_session_send(sdi, &packet);
 				devc->sent_samples += pre_trigger_samples + sending_now - trigger_offset;
 
-				devc->trigger_fired = TRUE;
+				devc->trigger_fired = TRUE;	
+				devc->trigger_continue = TRUE;
 			}
 		}
 		logic_done += sending_now;

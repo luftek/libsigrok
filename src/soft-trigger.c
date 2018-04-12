@@ -157,8 +157,12 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 	GSList *l, *l_stage;
 	int offset;
 	int i;
-	gboolean match_found;
+	gboolean match_found, send_samples_out;
 
+	send_samples_out = TRUE;
+	if (*pre_trigger_samples == -1)
+		send_samples_out = FALSE;
+		
 	offset = -1;
 	for (i = 0; i < len; i += stl->unitsize) {
 		l_stage = g_slist_nth(stl->trigger->stages, stl->cur_stage);
@@ -185,16 +189,18 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 				/* Advance to next stage. */
 				stl->cur_stage++;
 			} else {
-				/* Matched on last stage, send pre-trigger data. */
-				pre_trigger_append(stl, buf, i);
-				pre_trigger_send(stl, pre_trigger_samples);
-
-				/* Fire trigger. */
 				offset = i / stl->unitsize;
+				/* Should we send samples out? */
+				if (send_samples_out == TRUE) {
+					/* Matched on last stage, send pre-trigger data. */
+					pre_trigger_append(stl, buf, i);
+					pre_trigger_send(stl, pre_trigger_samples);
 
-				packet.type = SR_DF_TRIGGER;
-				packet.payload = NULL;
-				sr_session_send(stl->sdi, &packet);
+					/* Fire trigger. */
+					packet.type = SR_DF_TRIGGER;
+					packet.payload = NULL;
+					sr_session_send(stl->sdi, &packet);
+				}	
 				break;
 			}
 		} else if (stl->cur_stage > 0) {
@@ -215,7 +221,7 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 		}
 	}
 
-	if (offset == -1)
+	if (offset == -1 && send_samples_out == TRUE)
 		pre_trigger_append(stl, buf, len);
 
 	return offset;
