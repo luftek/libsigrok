@@ -40,6 +40,8 @@ SR_PRIV struct soft_trigger_logic *soft_trigger_logic_new(
 	stl->pre_trigger_size = stl->unitsize * pre_trigger_samples;
 	stl->pre_trigger_buffer = g_malloc(stl->pre_trigger_size);
 	stl->pre_trigger_head = stl->pre_trigger_buffer;
+	stl->holdoff_count = 0;
+	stl->holdoff_limit = 10; /* Should be settable through gui, cli */
 
 	if (stl->pre_trigger_size > 0 && !stl->pre_trigger_buffer) {
 		soft_trigger_logic_free(stl);
@@ -53,6 +55,7 @@ SR_PRIV void soft_trigger_logic_free(struct soft_trigger_logic *stl)
 {
 	g_free(stl->pre_trigger_buffer);
 	g_free(stl->prev_sample);
+	g_slist_free(stl->matched);
 	g_free(stl);
 }
 
@@ -162,9 +165,27 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 	send_samples_out = TRUE;
 	if (*pre_trigger_samples == -1)
 		send_samples_out = FALSE;
-		
+
 	offset = -1;
-	for (i = 0; i < len; i += stl->unitsize) {
+	i = 0;
+	
+	if (stl->matched)
+		g_slist_free(stl->matched);
+	stl->matched = NULL;
+	
+	/* Any holdoff count left from previous function call? */
+	if (stl->holdoff_count) {
+		if (stl->holdoff_count >= len / stl->unitsize) {
+			stl->holdoff_count -= len / stl->unitsize;
+			return -1;
+		} else {
+			i = stl->holdoff_count * stl->unitsize;
+			memcpy(stl->prev_sample, buf + i - stl->unitsize, stl->unitsize);
+			stl->holdoff_count = 0;
+		} 
+	} 
+
+	for (; i < len; i += stl->unitsize) {
 		l_stage = g_slist_nth(stl->trigger->stages, stl->cur_stage);
 		stage = l_stage->data;
 		if (!stage->matches)
@@ -200,8 +221,19 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 					packet.type = SR_DF_TRIGGER;
 					packet.payload = NULL;
 					sr_session_send(stl->sdi, &packet);
-				}	
-				break;
+					break;
+				} else {
+					stl->matched = g_slist_append(stl->matched, GINT_TO_POINTER(offset));
+					i += stl->holdoff_limit * stl->unitsize;
+					if (i >= len) {
+						stl->holdoff_count = (i - len ) / stl->unitsize;
+						break;
+					}
+					else {
+						memcpy(stl->prev_sample, buf + i, stl->unitsize);
+						continue;
+					} 
+				}
 			}
 		} else if (stl->cur_stage > 0) {
 			/*
@@ -220,6 +252,8 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 			stl->cur_stage = 0;
 		}
 	}
+	if (stl->matched)
+		offset = stl->matched->data;
 
 	if (offset == -1 && send_samples_out == TRUE)
 		pre_trigger_append(stl, buf, len);

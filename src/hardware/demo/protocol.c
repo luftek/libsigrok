@@ -284,8 +284,9 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 	struct sr_datafeed_logic logic;
 	uint64_t samples_todo, logic_done, sending_now;
 	int64_t elapsed_us, todo_us;
-	int trigger_offset;
+	int trigger_offset, trigger_offset_last;
 	int pre_trigger_samples;
+	GSList *l;
 
 	(void)fd;
 	(void)revents;
@@ -356,22 +357,29 @@ SR_PRIV int demo_prepare_data(int fd, int revents, void *cb_data)
 				/* This call returns first trigger_offset from current sample buffer, not multiple */
 				trigger_offset = soft_trigger_logic_check(devc->stl,
 					devc->logic_data, sending_now * devc->logic_unitsize, &pre_trigger_samples);
+				trigger_offset_last = 0;
 				
 				if (trigger_offset > -1){
 
-					/* Send data before trigger */
-					packet.type = SR_DF_LOGIC;
-					packet.payload = &logic;
-					logic.length = trigger_offset * devc->logic_unitsize;
-					logic.data = devc->logic_data;
-					sr_session_send(sdi, &packet);
+					for (l = devc->stl->matched; l; l = l->next) {
+						trigger_offset = (int) l->data;
 
-					/* Send trigger frame */ 
-					packet.type = SR_DF_TRIGGER;
-					packet.payload = NULL;
-					sr_session_send(sdi, &packet);
+						/* Send data before trigger */
+						packet.type = SR_DF_LOGIC;
+						packet.payload = &logic;
+						logic.length = (trigger_offset - trigger_offset_last) * devc->logic_unitsize;
+						logic.data = devc->logic_data + trigger_offset_last * devc->logic_unitsize;
+						sr_session_send(sdi, &packet);
+
+						/* Send trigger frame */ 
+						packet.type = SR_DF_TRIGGER;
+						packet.payload = NULL;
+						sr_session_send(sdi, &packet);
+
+						trigger_offset_last = trigger_offset;
+					}	
 					
-					/* Send data after trigger */
+					/* Send data after last trigger */
 					packet.type = SR_DF_LOGIC;
 					packet.payload = &logic;
 					logic.length = (sending_now - trigger_offset) * devc->logic_unitsize;

@@ -1027,6 +1027,9 @@ struct soft_trigger_logic {
 	uint8_t *pre_trigger_head;
 	int pre_trigger_size;
 	int pre_trigger_fill;
+	GSList *matched;
+	int holdoff_count;
+	int holdoff_limit;
 };
 
 SR_PRIV struct soft_trigger_logic *soft_trigger_logic_new(
