@@ -183,6 +183,9 @@ static struct sr_key_info sr_key_info_config[] = {
 		"Trigger level", NULL},
 	{SR_CONF_HOLDOFF, SR_T_UINT64, "holdoff_samples",
 		"Repeat trigger holdoff samples", NULL},
+	{SR_CONF_REPEAT_TRIGGER, SR_T_BOOL, "repeat_trigger",
+		"Repeat trigger", NULL},
+	  
 
 	/* Special stuff */
 	{SR_CONF_SESSIONFILE, SR_T_STRING, "sessionfile",

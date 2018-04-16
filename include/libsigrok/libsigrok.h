@@ -992,6 +992,9 @@ enum sr_configkey {
 	/** Holdoff time for soft-trigger module */
 	SR_CONF_HOLDOFF,
 
+	/** Repeate trigger enable */
+	SR_CONF_REPEAT_TRIGGER,
+
 	/* Update sr_key_info_config[] (hwdriver.c) upon changes! */
 
 	/*--- Special stuff -------------------------------------------------*/

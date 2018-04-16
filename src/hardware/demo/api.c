@@ -59,6 +59,7 @@ static const uint32_t devopts[] = {
 	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
 	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_HOLDOFF | SR_CONF_GET | SR_CONF_SET,
+	SR_CONF_REPEAT_TRIGGER | SR_CONF_GET | SR_CONF_SET,
 };
 
 static const uint32_t devopts_cg_logic[] = {
@@ -162,6 +163,9 @@ static int config_get(uint32_t key, GVariant **data,
 	case SR_CONF_HOLDOFF:
 		*data = g_variant_new_uint64(devc->holdoff_samples);
 		break;
+	case SR_CONF_REPEAT_TRIGGER:
+		*data = g_variant_new_boolean(devc->repeat_trigger);
+		break;
 	default:
 		return SR_ERR_NA;
 	}
@@ -210,6 +214,9 @@ static int config_set(uint32_t key, GVariant *data,
 	case SR_CONF_HOLDOFF:
             devc->holdoff_samples = g_variant_get_uint64(data);
             break;
+	case SR_CONF_REPEAT_TRIGGER:
+			devc->repeat_trigger = g_variant_get_boolean(data);
+			break;
 	default:
 		return SR_ERR_NA;
 	}

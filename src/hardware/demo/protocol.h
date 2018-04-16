@@ -46,6 +46,7 @@ struct dev_context {
     gboolean trigger_fired;
 	gboolean trigger_continue;
 	uint64_t holdoff_samples;
+	gboolean repeat_trigger;
 
 	uint64_t limit_msec;
 	uint64_t sent_samples;
