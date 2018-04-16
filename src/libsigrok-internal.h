@@ -1029,7 +1029,7 @@ struct soft_trigger_logic {
 	int pre_trigger_fill;
 	GSList *matched;
 	int holdoff_count;
-	int holdoff_limit;
+	int holdoff_samples;
 };
 
 SR_PRIV struct soft_trigger_logic *soft_trigger_logic_new(

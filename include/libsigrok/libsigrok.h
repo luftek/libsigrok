@@ -989,6 +989,9 @@ enum sr_configkey {
 	/** Under-voltage condition threshold. */
 	SR_CONF_UNDER_VOLTAGE_CONDITION_THRESHOLD,
 
+	/** Holdoff time for soft-trigger module */
+	SR_CONF_HOLDOFF,
+
 	/* Update sr_key_info_config[] (hwdriver.c) upon changes! */
 
 	/*--- Special stuff -------------------------------------------------*/

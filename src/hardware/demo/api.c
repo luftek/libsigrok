@@ -58,6 +58,7 @@ static const uint32_t devopts[] = {
 	SR_CONF_SAMPLERATE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
 	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
+	SR_CONF_HOLDOFF | SR_CONF_GET | SR_CONF_SET,
 };
 
 static const uint32_t devopts_cg_logic[] = {
@@ -156,11 +157,11 @@ static int config_get(uint32_t key, GVariant **data,
 		*data = g_variant_new_string(logic_pattern_str[pattern]);
 		break;
     case SR_CONF_CAPTURE_RATIO:
-            if (!sdi)
-                    return SR_ERR;
-            devc = sdi->priv;
-            *data = g_variant_new_uint64(devc->capture_ratio);
-			break;
+		*data = g_variant_new_uint64(devc->capture_ratio);
+		break;
+	case SR_CONF_HOLDOFF:
+		*data = g_variant_new_uint64(devc->holdoff_samples);
+		break;
 	default:
 		return SR_ERR_NA;
 	}
@@ -205,6 +206,9 @@ static int config_set(uint32_t key, GVariant *data,
 		break;
     case SR_CONF_CAPTURE_RATIO:
             devc->capture_ratio = g_variant_get_uint64(data);
+            break;
+	case SR_CONF_HOLDOFF:
+            devc->holdoff_samples = g_variant_get_uint64(data);
             break;
 	default:
 		return SR_ERR_NA;
@@ -264,6 +268,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
             devc->stl = soft_trigger_logic_new(sdi, trigger, pre_trigger_samples);
             if (!devc->stl)
                     return SR_ERR_MALLOC;
+			devc->stl->holdoff_samples = devc->holdoff_samples;
             devc->trigger_fired = FALSE;
     } else
             devc->trigger_fired = TRUE;

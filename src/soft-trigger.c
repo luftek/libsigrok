@@ -41,7 +41,7 @@ SR_PRIV struct soft_trigger_logic *soft_trigger_logic_new(
 	stl->pre_trigger_buffer = g_malloc(stl->pre_trigger_size);
 	stl->pre_trigger_head = stl->pre_trigger_buffer;
 	stl->holdoff_count = 0;
-	stl->holdoff_limit = 10; /* Should be settable through gui, cli */
+	stl->holdoff_samples = 0;
 
 	if (stl->pre_trigger_size > 0 && !stl->pre_trigger_buffer) {
 		soft_trigger_logic_free(stl);
@@ -224,7 +224,7 @@ SR_PRIV int soft_trigger_logic_check(struct soft_trigger_logic *stl,
 					break;
 				} else {
 					stl->matched = g_slist_append(stl->matched, GINT_TO_POINTER(offset));
-					i += stl->holdoff_limit * stl->unitsize;
+					i += stl->holdoff_samples * stl->unitsize;
 					if (i >= len) {
 						stl->holdoff_count = (i - len ) / stl->unitsize;
 						break;
